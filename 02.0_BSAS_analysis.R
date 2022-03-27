@@ -1,13 +1,8 @@
-## 2021 update 
-
 ## set working directory
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 
 ## LOAD LIBRARIES ----
 
-library(dplyr) 
-library(tidyr) 
-library(ggplot2) 
 library(betareg) 
 library(car) 
 require(devtools) 
@@ -18,125 +13,85 @@ library(ggpubr)
 library(AICcmodavg) 
 library(data.table)
 library(multcomp)
+library(biostat)
+library(tidyverse)
 
-## DATA HANDLING ----
+## IMPORT DATA ----
 
-## IMPORT AND MANIPULATE DATA 
+## import data from geneious 
+data_unmod<-read.csv("02.1_geneious_data_2021.csv")
 
-data<-read.csv("02.1_geneious_data_2021.csv")
- 
-## DROP GENE ANNOTATION INFO FROM 'TYPE' COLUMN 
-data<-data %>% 
-  filter(Type!="gene") %>% 
-    droplevels
+## import gene and cpg information
+gene_cpg <- read.csv("02.2_gene_CpG_info.csv")
 
-## ADD GENE AND CPG NAMES 
+## import fish ID numbers 
+fish_data<-read.csv("02.3_Barra_IDs.csv")
 
-## Gene
-GeneCPG <- read.csv("02.2_gene_CpG_info.csv") 
-data$Gene <- data$Minimum 
-find <- GeneCPG$Minimum 
-replace <- as.vector(GeneCPG$Gene) 
-found <- match(data$Gene, find) 
-data$Gene <- ifelse(is.na(found), NA, replace[found])
-
-## CpG
-data$CpG_site <- data$Minimum 
-replace <- as.vector(GeneCPG$Position)
-found <- match(data$CpG_site, find)
-data$CpG_site <- ifelse(is.na(found), NA, replace[found])
-
-## ADD FISH ID NUMBERS 
-FishData<-read.csv("02.3_Barra_IDs.csv")
-data$Fish <- data$Track.Name 
-find <- FishData$Track.Name
-replace <- as.vector(FishData$LTMPno)
-found <- match(data$Fish, find)
-data$Fish <- ifelse(is.na(found), NA, replace[found])
-
-## REMOVE ANNOTATIONS THAT ARE NOT POLYMORPHISMS 
-data <- data %>% 
-filter(Type=="Polymorphism") %>% 
-  droplevels
-
-## REMOVE DATA THAT DOESN'T OCCUR AT CPG SITES 
-data <- data %>%
-  na.omit(data$CpG_site) %>% 
-    droplevels 
-
-## REMOVE ANYTHING WITH LESS THAN 500 READS 
-data <- data %>% 
-  filter(Coverage>499) %>% 
-    droplevels
-
-## REMOVE NON-CT CHANGES 
-data <- data %>% 
-  filter(Change=="C -> T") %>% 
-  droplevels
-
-## REMOVE % SIGNS AND CREATE prop_meth for PROPORTION 
-data$Reference.Frequency <- sub("\\%.*","\\",data$Reference.Frequency) 
-data$Reference.Frequency <- as.numeric(as.character(data$Reference.Frequency)) 
-data$prop_meth <- (data$Reference.Frequency/100)
-
-## REMOVE BARRA FROM LOW FREQUENCY CATCH LOCATIONS
-data<-subset(data, Fish!="#251")
-data<-subset(data, Fish!="#254") 
-data<-subset(data, Fish!="#110") 
-
-## ADD SAMPLING INFO (LOCATION ETC) FROM LTMP DATA
+## import sampling information (location etc) from LTMP data
 barra_data <- read.csv("02.4_barra_data.csv")
-data$Minimum <- as.numeric(as.character(data$Minimum))
-columns_to_copy<-c("JulieRegion", "SexCode", "Sex", "tl", "yr", "AgeClass", "YearClass",
-                   "MonthCaught") 
+ 
+## FORMAT DATA ---- 
 
-## create variable list 
-for (i in columns_to_copy) { 
-  data[[i]]=data$Fish 
-}
-
-for (i in columns_to_copy) { 
-  find<-barra_data$LTMPno                
-  replace<-as.vector(barra_data[[i]])   
-  found<-match(data[[i]], find)      
-  data[[i]]<-ifelse(is.na(found), NA, replace[found])
-}
-
-## DELETE AND RENAME COLUMNS 
-deletes<-c("Variant.Raw.Frequency", "Variant.Frequency", "Name", "Change", "Type", "Track.Name", "Motif")
-data <- data[ , !(names(data) %in% deletes)] 
-names(data)[names(data)=="tl"]<-"Total_length"
-names(data)[names(data)=="Reference.Frequency"] <- "Percent_methylation"
-
-## CREATE SIZE BINS 
-labs<-(c("50-60","60-70","70-80","80-90","90-100","v100"))
-data$Length_binned<- cut(data$Total_length, breaks = c(0,60,70,80,90,100,120), labels=labs)
-
-## MAKE FACTORS FACTORS 
-to_make_factors<-c("Sex", "Gene", "JulieRegion") 
-for (i in to_make_factors) {
-  data[[i]]=as.factor(data[[i]])
-}
-
-## DELETE TRANSITIONAL? FISH 
-data <- data %>% 
-  filter(Sex!="Transitional") %>% 
-    droplevels
-
-## CHANGE REGION AND SEX NAMES SO EAST COAST MALES COME FIRST ALPHABETICALLY **
-## this is so it comes first as a factor, but you can just re-order your factor to do the same (in future)
-data$JulieRegionEC <- data$JulieRegion
-data$JulieRegionEC <- gsub("Mid-northern GoC", "MidNorthernGulf", data$JulieRegionEC)
-data$JulieRegionEC <- gsub("Southern GoC", "SouthernGulf", data$JulieRegionEC)
-data$JulieRegionEC <- gsub("Wet-tropics East Coast", "EastCoastWetTropics", data$JulieRegionEC)
-data$JulieRegionEC <- as.factor(data$JulieRegionEC)
-
-data$SexM <- data$Sex
-data$SexM <- gsub("Female", "xFemale", data$SexM)
-data$SexM=as.factor(data$SexM)
-levels(data$SexM)
+data <- data_unmod %>% 
+  ## drop gene annotation information from 'type' column
+  filter(Type!="gene") %>% 
+  ## remove annotations that are not polymorphisms
+  filter(Type=="Polymorphism") %>% 
+  ## remove SNPs that didn't occur at CpG sites
+  na.omit(CpG_site) %>%
+  ## remove non-C-T changes
+  filter(Change=="C -> T") %>%
+  ## remove anything less than 500 reads 
+  filter(., Coverage>499) %>%
+  ## add gene and cpg information
+  mutate(Minimum = as.numeric(Minimum)) %>%
+  left_join(., gene_cpg, by = "Minimum") %>%
+  ## add fish IDs 
+  left_join(., fish_data, by = "Track.Name") %>%
+  rename(Fish = LTMPno) %>%
+  ## remove % signs and calculate prop meth
+  mutate(Reference.Frequency = sub("\\%.*","\\", Reference.Frequency)) %>%
+  mutate(Reference.Frequency = as.numeric(as.character(Reference.Frequency))) %>%
+  mutate(prop_meth = Reference.Frequency/100) %>%
+  ## remove barra from low frequency catch locations 
+  filter(., Fish!="#251") %>%
+  filter(., Fish!="#254") %>%
+  filter(., Fish!="#110") %>%
+  ## add sampling location info
+  left_join(., barra_data %>% 
+              select(JulieRegion, SexCode, Sex, tl, 
+                     yr, AgeClass, YearClass, MonthCaught, LTMPno) %>%
+              rename(Fish = LTMPno), 
+            by = "Fish") %>%
+  ## remove intersex? fish
+  filter(., Sex!="Transitional") %>% 
+  droplevels(.) %>%
+  ## delete unwanted columns
+  select(-c(Variant.Raw.Frequency, Variant.Frequency, 
+            Name, Change, Type, Track.Name)) %>%
+  ## rename some others
+  rename(Total_length = tl, 
+         Percent_methylation = Reference.Frequency) %>%
+  ## create size bins
+  mutate(Length_binned = cut(Total_length, 
+                             breaks = c(0,60,70,80,90,100,120), 
+                             labels = c("50-60","60-70","70-80","80-90","90-100","v100"))) %>%
+  ## make factors factors
+  mutate(Sex = as.factor(Sex), 
+         Gene = as.factor(Gene), 
+         JulieRegion = as.factor(JulieRegion), 
+         CpG_site = Position) %>%
+  ## CHANGE REGION AND SEX NAMES SO EAST COAST MALES COME FIRST ALPHABETICALLY **
+  ## this is so it comes first as a factor, but you can just re-order your factor to do the same (in future)
+  mutate(JulieRegionEC = gsub("Mid-northern GoC", "MidNorthernGulf", JulieRegion) %>%
+           gsub("Southern GoC", "SouthernGulf", .) %>%
+           gsub("Wet-tropics East Coast", "EastCoastWetTropics", .)) %>%
+  mutate(JulieRegionEC = as.factor(JulieRegionEC)) %>%
+  mutate(SexM = gsub("Female", "xFemale", Sex)) %>%
+  mutate(SexM = as.factor(SexM))
 
 ## STATS ----
+
 ## RUN BETA REGRESSION MODELS ----
 
 for (g in levels(data$Gene)) {
@@ -147,7 +102,7 @@ for (g in levels(data$Gene)) {
                                                        SexM:Total_length+CpG_site:SexM:Total_length+JulieRegionEC:SexM:Total_length), 
                               link="logit", data=data_gene)) ## same for all
   ## CpG automatically gets set as #1
-  SumBetaRegMod_OR_Coef_temp<-as.data.frame(summary(betareg_mod_temp)$coefficients) #just coefficients
+  SumBetaRegMod_OR_Coef_temp<-as.data.frame(summary(betareg_mod_temp)$coefficients) ## just coefficients
   frmla <- formula(betareg_mod_temp$formula)
   model_formula <- c(paste(frmla[2], frmla[1], frmla[3]))
   model_name <- paste("SumBetaRegMod_OR_Coef", g, sep=("_"))
@@ -186,7 +141,7 @@ for (g in levels(data$Gene)) {
 
 ## CREATE SUMMARY TABLE ----
 
-##  you're a pleb here - fix it **
+##  If i had time, I would do this with greater elegance... **
 
 ## cyp19a1a
 SumBetaRegMod_OR_Coefs_cyp19a1a <- rbind(SumBetaRegMod_OR_Coef_cyp19a1a,
@@ -441,7 +396,7 @@ names(lh_table_all)[(names(lh_table_all) == "Res.Df")] <- "Residual degrees of f
 names(lh_table_all)[(names(lh_table_all) == "Df")] <- "Degrees of freedom"
 names(lh_table_all)[(names(lh_table_all) == "Chisq")] <- "Chi-square statistic"
 
-lh_table_all$Comparison<-gsub("Julie.*SouthernGulf", "southern GoC", lh_table_all$Comparison) #. stands for character * stands for any number of character
+lh_table_all$Comparison<-gsub("Julie.*SouthernGulf", "southern GoC", lh_table_all$Comparison) ##'.' for character '*' for any number of character
 lh_table_all$Comparison<-gsub("Julie.*MidNorthernGulf", "mid-northern GoC", lh_table_all$Comparison)
 lh_table_all$Comparison<-gsub("Julie.*EastCoastWetTropics", "north Qld east coast", lh_table_all$Comparison)
 lh_table_all$Comparison<-gsub("Julie.*WetTropicsEastCoast", "north Qld east coast", lh_table_all$Comparison)
@@ -538,8 +493,8 @@ for (g in levels(data$Gene)) { #subset data by gene
             plot.margin = unit(c(0.1,0.1,0.1,0.1), "cm"),
             legend.position="right")
     p1<-addSmallLegend(p)
-    assign(p1_ttle, p1) # assign gene_sex_nolegends title to plot
-    # create "pl2" plot with region legend only and extract "l2" legend (once per everything...) ####
+    assign(p1_ttle, p1) ## assign gene_sex_nolegends title to plot
+    ## create "pl2" plot with region legend only and extract "l2" legend (once per everything...) ####
     pl2<-ggplot(data = data_sex, 
                 aes(Total_length, prop_meth, color=JulieRegionEC))+
       geom_point()+
@@ -551,13 +506,13 @@ for (g in levels(data$Gene)) { #subset data by gene
       scale_x_continuous(limits=c(50, 110), 
                          breaks=c(50, 60, 70, 80, 90, 100, 110))+
       scale_y_continuous(limits=c(0, 1))+
-      scale_colour_manual(values=c("#66c2a5", "#fc8d62", "#8da0cb"), #colour brewer palette Set2
-                          labels = c("North Qld east coast", "Mid-northern GoC", "Southern GoC"))+ #change legend names
+      scale_colour_manual(values=c("#66c2a5", "#fc8d62", "#8da0cb"), ## colour brewer palette Set2
+                          labels = c("North Qld east coast", "Mid-northern GoC", "Southern GoC"))+ ## change legend names
       theme_bw()+
-      labs(color = "Region")+ # change legend title
+      labs(color = "Region")+ ## change legend title
       theme(legend.position = "bottom", 
             legend.margin=margin(c(0,0,0,0)))
-    l2<-get_legend(pl2) # extract legend 2 
+    l2<-get_legend(pl2) ## extract legend 2 
   }
 }
 
@@ -612,13 +567,12 @@ all_genes <- ggarrange(ggarrange(nr5a2_Males, nr5a2_Females, common.legend = TRU
                        nrow=4, ncol=1)
 
 ## add legend 
-all_genes_leg <- plot_grid(all_genes, l2, # add region legend 
+all_genes_leg <- plot_grid(all_genes, l2, ## add region legend 
                            nrow = 2,
-                           rel_heights = c(14.5, 0.5)) #change me
+                           rel_heights = c(14.5, 0.5)) ## change me
 all_genes_leg
 
 ## save plot
-# save_plot("20210730_AllGenes_nolims.pdf", 
 save_plot("figure_all_nolims.pdf", 
           all_genes_leg,
           base_height = 29/3,
@@ -628,14 +582,14 @@ save_plot("figure_all_nolims.pdf",
 
 ## define CpG   
 cpg<-"CpG4"
-n<-4 # as above 
+n<-4 ## as above 
 ## run loop 
-for (g in levels(data$Gene)) { #subset data by gene
+for (g in levels(data$Gene)) { ## subset data by gene
   data_gene <- filter(data, Gene==g)
   data_gene <- droplevels(data_gene)
   data_gene$CpG_site <- factor(data_gene$CpG_site)
-  #by sex (within gene)
-  for (s in levels(data_gene$Sex)) { # subset data by sex ####
+  ## by sex (within gene)
+  for (s in levels(data_gene$Sex)) { ## subset data by sex 
     data_sex <- filter(data_gene, Sex==s) 
     data_sex <- droplevels(data_sex)
     data_sex$CpG_site <- factor(data_sex$CpG_site)
@@ -958,14 +912,14 @@ for (i in levels(data$Gene)) {
   Zscore<-qnorm(temp_MWW$p.value)
   print('Zscore')
   print(Zscore)
-  rscore<- abs(Zscore)/sqrt(length(data_gene)) #sometimes calculated as an effect size for M-W test
+  rscore<- abs(Zscore)/sqrt(length(data_gene)) ## sometimes calculated as an effect size for M-W test
   print('rscore')
   print(rscore)
-  data_gene_F<-filter(data_gene, Sex=='Female') #female data
+  data_gene_F<-filter(data_gene, Sex=='Female') ## female data
   print('Female Median')
   print(median(data_gene_F$prop_meth))
   print(IQR(data_gene_F$prop_meth))
-  data_gene_M<-filter(data_gene, Sex=='Male') #male data
+  data_gene_M<-filter(data_gene, Sex=='Male') ## male data
   print('Male Median')
   print(median(data_gene_M$prop_meth))
   print(IQR(data_gene_M$prop_meth))
@@ -984,15 +938,13 @@ data$SexRegionND <- factor(data$SexRegionND,
                                     "Female_Mid.northern GoC", 
                                     "Female_Wet.tropics East Coast"))
 
-# devtools::install_github("GegznaV/biostat")
-library(biostat)
 
 PWT_cld <- NULL
 for (i in levels(data$Gene)) {
   data_gene <- filter(data, Gene==i)
   name_temp<-paste(i)
   print(name_temp)
-  temp_MWW<-with(data_gene, pairwise.wilcox.test(prop_meth, SexRegionND, alpha=0.05, p.adjust.method="BH")) #Wilcoxon rank sum test (aka Mann-Whiteney U test)
+  temp_MWW<-with(data_gene, pairwise.wilcox.test(prop_meth, SexRegionND, alpha=0.05, p.adjust.method="BH")) ## Wilcoxon rank sum test (aka Mann-Whiteney U test)
   print(summary(temp_MWW))
   temp_df <- make_cld(temp_MWW)
   temp_df$Gene <- paste(i)
@@ -1183,34 +1135,6 @@ save_plot("figure_hypothesis_more.pdf",
           base_height = 29/3,
           base_width = 21/2.5)
 
-## fake data observed (not finished)
-# fake_data_obs<-data.frame(gene=c("nr5a2", "nr5a2", "nr5a2", "nr5a2", "nr5a2", "nr5a2", "nr5a2", 
-#                              "nr5a2", "nr5a2", "nr5a2", "nr5a2", "nr5a2", "nr5a2", "nr5a2",
-#                              "dmrt1", "dmrt1", "dmrt1", "dmrt1", "dmrt1", "dmrt1", "dmrt1", 
-#                              "dmrt1", "dmrt1", "dmrt1", "dmrt1", "dmrt1", "dmrt1", "dmrt1", 
-#                              "cyp19a1a", "cyp19a1a", "cyp19a1a", "cyp19a1a", "cyp19a1a", "cyp19a1a", "cyp19a1a", 
-#                              "cyp19a1a", "cyp19a1a", "cyp19a1a", "cyp19a1a", "cyp19a1a", "cyp19a1a", "cyp19a1a", 
-#                              "esr1", "esr1", "esr1", "esr1", "esr1", "esr1", "esr1", 
-#                              "esr1", "esr1", "esr1", "esr1", "esr1", "esr1", "esr1"), 
-#         sex=c("Male", "Male", "Male", "Male", "Male", "Male", "Male", 
-#        "Female", "Female", "Female", "Female", "Female", "Female", "Female", 
-#        "Male", "Male", "Male", "Male", "Male", "Male", "Male",
-#        "Female", "Female", "Female", "Female", "Female", "Female", "Female", 
-#        "Male", "Male", "Male", "Male", "Male", "Male", "Male",
-#        "Female", "Female", "Female", "Female", "Female", "Female", "Female", 
-#        "Male", "Male", "Male", "Male", "Male", "Male", "Male", 
-#        "Female", "Female", "Female", "Female", "Female", "Female", "Female"), 
-#        total_length=c(50, 60, 70, 80, 90, 100, 110, 
-#                 50, 60, 70, 80, 90, 100, 110, 
-#                 50, 60, 70, 80, 90, 100, 110, 
-#                 50, 60, 70, 80, 90, 100, 110, 
-#                 50, 60, 70, 80, 90, 100, 110, 
-#                 50, 60, 70, 80, 90, 100, 110, 
-#                 50, 60, 70, 80, 90, 100, 110, 
-#                 50, 60, 70, 80, 90, 100, 110), 
-#        meth=c(0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 
-#               0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2))
-
 ## AIC/BIC/VIF ----
 
 
@@ -1240,6 +1164,7 @@ for (Amplicon in levels(data$Gene)) {
   AIC_BIC_temp<-cbind(Amplicon, AIC_BIC_temp)
   AIC_BIC<-rbind(AIC_BIC_temp, AIC_BIC)
 }
+
 names(AIC_BIC)[names(AIC_BIC)=="Modnames"]<-"Covariate(s)"
 names(AIC_BIC)[names(AIC_BIC)=="LL"]<-"Log-likelihood"
 names(AIC_BIC)[names(AIC_BIC)=="LL"]<-"Log-likelihood"
