@@ -81,13 +81,13 @@ data <- data_unmod %>%
          Gene = as.factor(Gene), 
          JulieRegion = as.factor(JulieRegion), 
          CpG_site = Position) %>%
-  ## CHANGE REGION AND SEX NAMES SO EAST COAST MALES COME FIRST ALPHABETICALLY **
-  ## this is so it comes first as a factor, but you can just re-order your factor to do the same (in future)
+  ## edit region and sex names so that east coast males come first alphabetically
   mutate(JulieRegionEC = gsub("Mid-northern GoC", "MidNorthernGulf", JulieRegion) %>%
            gsub("Southern GoC", "SouthernGulf", .) %>%
            gsub("Wet-tropics East Coast", "EastCoastWetTropics", .)) %>%
-  mutate(JulieRegionEC = as.factor(JulieRegionEC)) %>%
   mutate(SexM = gsub("Female", "xFemale", Sex)) %>%
+  ## alternatively, just reorder the factor here (although df edits can cause headaches)
+  mutate(JulieRegionEC = as.factor(JulieRegionEC)) %>%
   mutate(SexM = as.factor(SexM))
 
 ## STATS ----
